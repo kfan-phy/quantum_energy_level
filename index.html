@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<script>
+(function () {
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
+  if (dpr <= 1) return;
+  var orig = HTMLCanvasElement.prototype.getContext;
+  var descW = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'width');
+  var descH = Object.getOwnPropertyDescriptor(HTMLCanvasElement.prototype, 'height');
+  HTMLCanvasElement.prototype.getContext = function (type, attrs) {
+    var ctx = orig.call(this, type, attrs);
+    if (type !== '2d' || !ctx || this.__cssCanvas) return ctx;
+    this.__cssCanvas = true;
+    var canvas = this;
+    var cssW = descW.get.call(canvas);
+    var cssH = descH.get.call(canvas);
+    var lock = false;
+    var cssBox = /\b(?:w|h)-full\b|\b(?:w|h)-screen\b|\binset-0\b/.test(canvas.className || '') || !!(canvas.style && (canvas.style.width || canvas.style.height));
+    function apply() {
+      if (lock) return;
+      lock = true;
+      descW.set.call(canvas, Math.max(1, Math.round(cssW * dpr)));
+      descH.set.call(canvas, Math.max(1, Math.round(cssH * dpr)));
+      if (!cssBox) {
+        canvas.style.width = cssW + 'px';
+        canvas.style.height = cssH + 'px';
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      lock = false;
+    }
+    Object.defineProperty(canvas, 'width', {
+      configurable: true,
+      get: function () { return cssW; },
+      set: function (v) { cssW = Number(v) || 0; apply(); }
+    });
+    Object.defineProperty(canvas, 'height', {
+      configurable: true,
+      get: function () { return cssH; },
+      set: function (v) { cssH = Number(v) || 0; apply(); }
+    });
+    if (cssW && cssH) apply();
+    return ctx;
+  };
+})();
+</script>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hydrogen Atom Physics Lab</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']]
+            },
+            svg: { fontCache: 'global' },
+            startup: {
+                pageReady: () => {
+                    return MathJax.startup.defaultPageReady().then(() => {
+                        if (typeof initPhotonButtons === 'function') {
+                            initPhotonButtons();
+                        }
+                    });
+                }
+            }
+        };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; overflow-x: hidden; font-family: 'Noto Sans TC', system-ui, sans-serif; }
+        .canvas-container { background: radial-gradient(circle, #1e293b 0%, #0f172a 100%); }
+        .control-panel { background-color: rgba(30, 41, 59, 0.8); backdrop-filter: blur(8px); }
+        .photon-btn { transition: all 0.2s; border: 1px solid #475569; background: #1e293b; }
+        .photon-btn:hover { border-color: #fbbf24; background: #334155; }
+        .photon-btn.active { background-color: #fbbf24; color: #0f172a; border-color: #fbbf24; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+        .tab-btn.active { border-bottom: 2px solid #38bdf8; color: #38bdf8; }
+        .teach-btn {
+            font-size: 0.75rem; font-weight: 700; padding: 0.4rem 0.7rem; border-radius: 0.5rem;
+            border: 1px solid; transition: background-color 0.15s, color 0.15s;
+        }
+        .modal-panel { transition: opacity 0.2s ease; }
+        .quiz-item { margin-bottom: 1.25rem; padding-bottom: 1rem; border-bottom: 1px solid #334155; }
+        .quiz-item .q-stem { font-weight: 600; color: #e2e8f0; margin-bottom: 0.5rem; }
+        .quiz-options { display: flex; flex-direction: column; gap: 0.4rem; }
+        .quiz-options button {
+            text-align: left; padding: 0.5rem 0.75rem; border-radius: 0.5rem;
+            border: 1px solid #475569; background: #1e293b; font-size: 0.875rem; color: #e2e8f0; transition: all 0.15s;
+        }
+        .quiz-options button:hover { border-color: #818cf8; background: #312e81; }
+        .quiz-options button.selected { border-color: #818cf8; background: #3730a3; }
+        .quiz-options button.correct { border-color: #16a34a; background: #14532d; }
+        .quiz-options button.wrong { border-color: #dc2626; background: #7f1d1d; }
+        .quiz-answer { display: none; margin-top: 0.5rem; padding: 0.5rem 0.75rem; background: #0f172a; border-radius: 0.5rem; font-size: 0.85rem; color: #cbd5e1; }
+        .quiz-answer.show { display: block; }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <nav class="w-full bg-slate-900/90 border-b border-slate-700 p-3 sm:p-4 sticky top-0 z-50 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+                <div class="w-8 h-8 shrink-0 bg-blue-500 rounded-full flex items-center justify-center font-bold text-white">H</div>
+                <span class="font-bold text-lg sm:text-xl tracking-tight truncate" id="nav-title">Hydrogen Atom Physics Lab</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5 sm:gap-2 items-center">
+                <button type="button" id="btn-reset" class="bg-slate-600 hover:bg-slate-500 text-white px-3 py-2 rounded font-medium transition border border-slate-500 text-sm">Reset</button>
+                <span class="hidden sm:inline text-slate-600 mx-0.5">|</span>
+                <button type="button" id="btn-steps" class="teach-btn border-indigo-400 bg-indigo-900/40 text-indigo-200 hover:bg-indigo-800/60">Steps</button>
+                <button type="button" id="btn-principle" class="teach-btn border-blue-400 bg-blue-900/40 text-blue-200 hover:bg-blue-800/60">Principle</button>
+                <button type="button" id="btn-quiz" class="teach-btn border-violet-400 bg-violet-900/40 text-violet-200 hover:bg-violet-800/60">Quiz</button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto p-4 md:p-8">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+
+            <div class="control-panel p-6 rounded-2xl border border-slate-700 shadow-xl space-y-6 h-fit order-2">
+                <div>
+                    <h2 class="text-xl font-semibold mb-4 text-blue-300" id="ui-select-particle">1. Select Particle</h2>
+                    <div class="flex gap-2">
+                        <button type="button" id="btn-electron" onclick="setParticle('electron')" class="flex-1 py-2 rounded-lg bg-blue-600 font-bold">Electron</button>
+                        <button type="button" id="btn-photon" onclick="setParticle('photon')" class="flex-1 py-2 rounded-lg bg-slate-700 font-bold border border-slate-500">Photon</button>
+                    </div>
+                </div>
+
+                <div id="energy-controls">
+                    <h2 class="text-xl font-semibold mb-2 text-blue-300" id="ui-set-energy">2. Set Energy</h2>
+
+                    <div id="ev-input-group" class="space-y-4">
+                        <label class="block text-sm text-slate-400"><span id="ui-energy-label">Energy</span> (eV): <span id="ev-display" class="text-white font-mono">10.20</span> eV</label>
+                        <input type="range" id="energy-slider" min="0" max="20.0" step="0.01" value="10.20" class="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer">
+                    </div>
+
+                    <div id="photon-input-group" class="hidden space-y-3">
+                        <label class="block text-sm text-slate-400" id="ui-photon-label">Select Resonance Transition:</label>
+                        <div class="grid grid-cols-1 gap-2 max-h-64 overflow-y-auto pr-2 custom-scrollbar" id="photon-btns-container"></div>
+                    </div>
+                </div>
+
+                <button type="button" onclick="fire()" class="w-full py-4 rounded-xl bg-yellow-500 hover:bg-yellow-400 text-slate-900 font-black text-xl shadow-lg transition-all" id="ui-fire">Fire Particle!</button>
+
+                <div class="bg-slate-800/50 p-4 rounded-lg border border-slate-700">
+                    <h3 class="text-xs font-bold text-slate-500 uppercase mb-2" id="ui-log-title">Experiment Log</h3>
+                    <div id="log-box" class="h-32 overflow-y-auto text-sm font-mono text-green-400 space-y-1 custom-scrollbar">
+                        Waiting to start...
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2 space-y-6 order-1">
+                <div class="canvas-container relative rounded-2xl border border-slate-700 shadow-2xl overflow-hidden aspect-video w-full flex items-center justify-center">
+                    <canvas id="mainCanvas" class="absolute inset-0 w-full h-full"></canvas>
+                    <div id="ionization-alert" class="hidden absolute top-10 bg-red-600/90 px-6 py-2 rounded-full font-bold text-white border border-red-400 animate-bounce">
+                        IONIZATION!
+                    </div>
+                </div>
+                <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 text-sm text-slate-400" id="ui-hint">
+                    Hint: Photons must have the exact amount of energy to be absorbed (1 to 1 interaction), otherwise they pass through. Electron can transfer part of its energy to cause excitation.
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Steps Modal -->
+    <div id="modal-steps" class="modal-panel fixed inset-0 z-[100] hidden flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="steps-title">
+        <div class="bg-slate-800 border border-slate-700 w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" data-modal-panel>
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900">
+                <h2 id="steps-title" class="text-lg font-bold text-indigo-300">Observation Steps</h2>
+                <button type="button" class="text-slate-400 text-2xl hover:text-white leading-none" data-close-modal="modal-steps" aria-label="Close">&times;</button>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scrollbar space-y-4 text-slate-300 text-sm" id="steps-body"></div>
+            <div class="p-4 bg-slate-900 border-t border-slate-700 text-right">
+                <button type="button" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold" data-close-modal="modal-steps" id="btn-steps-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Principle Modal -->
+    <div id="modal-principle" class="modal-panel fixed inset-0 z-[100] hidden flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="principle-title">
+        <div class="bg-slate-800 border border-slate-700 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" data-modal-panel>
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center bg-slate-900 gap-2 flex-wrap">
+                <div class="flex gap-4 items-center">
+                    <h2 id="principle-title" class="text-lg font-bold text-blue-300 sr-only">Principle</h2>
+                    <button type="button" onclick="switchTab('mechanism')" id="tab-mechanism" class="tab-btn px-2 py-1 font-bold active">Concept & Mechanism</button>
+                    <button type="button" onclick="switchTab('bohr')" id="tab-bohr" class="tab-btn px-2 py-1 font-bold">Bohr Postulates</button>
+                </div>
+                <button type="button" class="text-slate-400 text-2xl hover:text-white leading-none" data-close-modal="modal-principle" aria-label="Close">&times;</button>
+            </div>
+
+            <div class="p-6 sm:p-8 overflow-y-auto custom-scrollbar space-y-6 text-slate-300">
+                <div id="content-mechanism" class="tab-content space-y-6">
+                    <section>
+                        <h3 class="text-xl font-bold text-blue-400 mb-2">Concept</h3>
+                        <p>In hydrogen, the electron occupies discrete <strong>stationary</strong> levels $E_n=-13.6/n^2\,\mathrm{eV}$. An incident <strong>photon</strong> or <strong>electron</strong> can <strong>excite</strong> the atom to higher $n$, or <strong>ionize</strong> it if enough energy is supplied; falling back emits a photon (<strong>emission</strong>).</p>
+                    </section>
+                    <section>
+                        <h3 class="text-xl font-bold text-yellow-400 mb-2">Mechanism</h3>
+                        <ul class="list-disc ml-6 mt-2 space-y-2">
+                            <li><span class="text-yellow-400 font-bold">Photon:</span> must nearly match $\Delta E=E_f-E_i$ (0.01 eV tolerance here) or it passes through.</li>
+                            <li><span class="text-blue-400 font-bold">Electron:</span> inelastic if KE $\ge\Delta E$; leftover KE stays with the projectile; else elastic.</li>
+                            <li><span class="text-red-400 font-bold">Ionization:</span> electron energy $\ge 0$ (~13.6 eV from ground).</li>
+                            <li><span class="text-slate-300 font-bold">Idealizations:</span> H only; circular orbits; random spontaneous emission; not a multi-element line library.</li>
+                        </ul>
+                        <div class="bg-slate-900 p-3 rounded mt-3 border-l-4 border-red-500 italic text-sm">
+                            Note: If the electron is already at $n=2$ ($-3.4\text{ eV}$), only an additional $3.4\text{ eV}$ is needed to ionize.
+                        </div>
+                    </section>
+                    <section>
+                        <h3 class="text-xl font-bold text-emerald-400 mb-2">Everyday Example</h3>
+                        <p>Discharge／neon excitation intuition; electron-impact excitation in fluorescent starters; “only resonant wavelengths absorb” as a qualitative classroom cue.</p>
+                    </section>
+                </div>
+                <div id="content-bohr" class="tab-content hidden space-y-6">
+                    <div class="bg-blue-900/30 p-4 rounded-lg border border-blue-700/50">
+                        <p class="text-sm italic text-blue-200">In 1913, Niels Bohr proposed three famous postulates that successfully explained the Hydrogen spectrum. The model combines classical mechanics' circular motion with the concept of quantization.</p>
+                    </div>
+                    <section>
+                        <h3 class="text-lg font-bold text-white border-b border-slate-600 mb-2">1. Stationary States</h3>
+                        <p>Electrons orbit the nucleus in specific orbits with fixed energy without radiating electromagnetic waves. These orbits are called Stationary States.</p>
+                        <p class="mt-2 text-blue-300">$$r_n = n^2 \cdot a_0 \quad (a_0 \approx 0.529 \text{\AA})$$</p>
+                    </section>
+                    <section>
+                        <h3 class="text-lg font-bold text-white border-b border-slate-600 mb-2">2. Frequency Condition</h3>
+                        <p>When an electron transitions between energy levels $E_i$ and $E_f$, it must absorb or emit a photon of a specific frequency:</p>
+                        <p class="mt-2 text-yellow-400">$$\Delta E = |E_f - E_i| = h\nu$$</p>
+                    </section>
+                    <section>
+                        <h3 class="text-lg font-bold text-white border-b border-slate-600 mb-2">3. Angular Momentum Quantization</h3>
+                        <p>The angular momentum $L$ of the electron orbiting the nucleus can only be integer multiples of $\hbar$ ($h/2\pi$):</p>
+                        <p class="mt-2 text-green-300">$$L = mvr = n\hbar \quad (n=1, 2, 3 \dots)$$</p>
+                    </section>
+                </div>
+            </div>
+
+            <div class="p-4 bg-slate-900 border-t border-slate-700 text-right">
+                <button type="button" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold" data-close-modal="modal-principle" id="btn-modal-start">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quiz Modal -->
+    <div id="modal-quiz" class="modal-panel fixed inset-0 z-[100] hidden flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="quiz-title">
+        <div class="bg-slate-800 border border-slate-700 w-full max-w-3xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" data-modal-panel>
+            <div class="p-4 border-b border-slate-700 flex justify-between items-center gap-2 flex-wrap bg-slate-900">
+                <h2 id="quiz-title" class="text-lg font-bold text-violet-300">Quiz</h2>
+                <div class="flex items-center gap-2 ml-auto">
+                    <button type="button" id="btn-quiz-answers" class="px-3 py-1.5 rounded-lg bg-violet-600/30 text-violet-200 border border-violet-500/40 text-xs font-semibold">Show answer</button>
+                    <button type="button" class="text-slate-400 text-2xl hover:text-white leading-none" data-close-modal="modal-quiz" aria-label="Close">&times;</button>
+                </div>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scrollbar" id="quiz-body"></div>
+            <div class="p-4 bg-slate-900 border-t border-slate-700 text-right">
+                <button type="button" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg font-bold" data-close-modal="modal-quiz" id="btn-quiz-close">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const logBox = document.getElementById('log-box');
+
+        const HC = 1239.84;
+        const R1 = 8;
+        const ENERGY_LEVELS = [0];
+        for (let n = 1; n <= 10; n++) ENERGY_LEVELS.push(-13.6 / (n * n));
+
+        let quizAnswersVisible = false;
+        let particleType = 'electron';
+        let currentEnergy = 10.20;
+        let nState = 1;
+        let particles = [];
+        let emittedPhotons = [];
+        let currentTab = 'mechanism';
+        let ionizationTimer = null;
+        let animationFrame = null;
+
+        const STEPS = [
+            "Keep <strong>Electron</strong> selected at about <strong>10.20 eV</strong> (default). Click <strong>Fire</strong>. Log should show an inelastic／transition message and the level highlight moves toward <strong>$n=2$</strong> ($\\Delta E\\approx 10.2\\,\\mathrm{eV}$). Wait to see spontaneous emission back down with a photon.",
+            "Switch to <strong>Photon</strong>, pick resonance <strong>$n=1\\to n=2$</strong> (~10.20 eV), fire: <strong>resonance absorption</strong>. Then fire a clearly <strong>off-resonance</strong> energy: log should show mismatch／pass-through and $n$ unchanged.",
+            "Back to <strong>Electron</strong>, set ~<strong>14 eV</strong> ($\\ge 13.6$) from ground and fire: <strong>ionization</strong> alert, then back to $n=1$. <strong>Reset</strong>: electron, 10.20 eV, ground state, clear particles／log wait line.",
+            "Link to the principle: photons need exact $\\Delta E$, electrons only $\\ge\\Delta E$. This sim is H-atom collision excitation／Bohr postulates."
+        ];
+
+        const QUIZ = [
+            {
+                type: 'mc',
+                stem: 'Select Electron at about <strong>10.20 eV</strong> and fire from the ground state. Which best matches this sim?',
+                options: [
+                    'Inelastic excitation can raise the level to about $n=2$ ($\\Delta E\\approx 10.2\\,\\mathrm{eV}$)',
+                    'It must ionize immediately and never return to $n=1$',
+                    'Electron mode can never change $n$',
+                    'This sim has no experiment log'
+                ],
+                answer: 'A. $E_2-E_1=10.2\\,\\mathrm{eV}$; the default slider is this value.',
+                correct: 0
+            },
+            {
+                type: 'sa',
+                stem: 'Switch to Photon: fire resonant <strong>$n=1\\to n=2$</strong>, then a clearly off-resonance energy. Predict how log and level change differ, then verify.',
+                answer: 'Resonance can absorb and jump; off-resonance tends to pass through (mismatch／pass-through log). Tolerance 0.01 eV.'
+            },
+            {
+                type: 'mc',
+                stem: 'In Electron mode near the ground state, set about <strong>14 eV</strong> and fire. What is expected?',
+                options: [
+                    'Ionization alert can appear (enough energy for ≥0), then state returns to $n=1$',
+                    '14 eV always jumps only to $n=3$ and never ionizes',
+                    'Ionization forces the UI into a different mode',
+                    'This sim has no ionization UI'
+                ],
+                answer: 'A. Ground-state ionization energy 13.6 eV; alert returns to $n=1$ after ~2 s.',
+                correct: 0
+            },
+            {
+                type: 'sa',
+                stem: 'After one photon resonance absorption or electron excitation, in your own words: (1) how photon vs electron excitation conditions differ here; (2) after Reset, what should happen to particle type, energy, level／$n$, and log.',
+                answer: '(1) Photons need near-exact $\\Delta E$; electrons only need KE $\\ge\\Delta E$. (2) Back to electron, 10.20 eV, ground state, clear particles／wait log.'
+            },
+            {
+                type: 'mc',
+                stem: 'Using this sim’s controls and design, which is most correct?',
+                options: [
+                    'You can pick incident electron／photon, set energy or resonance, fire for excitation／pass-through／ionization, with steps／principle／five quiz items—this is H collision excitation＋Bohr postulates',
+                    'It is mainly for measuring double-slit fringe spacing to find λ',
+                    'Reset always switches modes and deletes the ENERGY_LEVELS constants',
+                    'It mainly shows α gold-foil scattering and the nuclear atom'
+                ],
+                answer: 'A. Isolates electron_transition／emission_line_spectra／Rutherford／double-slit.',
+                correct: 0
+            }
+        ];
+
+        function typeset(el) {
+            if (window.MathJax && MathJax.typesetPromise && el) {
+                return MathJax.typesetPromise([el]).catch(function () {});
+            }
+        }
+
+        function initPhotonButtons() {
+            const container = document.getElementById('photon-btns-container');
+            if (!container) return;
+            container.innerHTML = '';
+            for (let i = 1; i <= 5; i++) {
+                for (let j = i + 1; j <= 6; j++) {
+                    const deltaE = ENERGY_LEVELS[j] - ENERGY_LEVELS[i];
+                    const wl = HC / deltaE;
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.className = 'photon-btn p-2 rounded text-left text-xs mb-1';
+                    if (i === 1 && j === 2) btn.classList.add('active');
+                    btn.innerHTML =
+                        '<div class="font-bold text-yellow-400">n=' + i + ' → n=' + j + '</div>' +
+                        '<div>$E = ' + deltaE.toFixed(2) + '$ eV, $\\lambda = ' + wl.toFixed(1) + '$ nm</div>';
+                    btn.onclick = function () {
+                        currentEnergy = deltaE;
+                        document.querySelectorAll('.photon-btn').forEach(function (b) { b.classList.remove('active'); });
+                        btn.classList.add('active');
+                    };
+                    container.appendChild(btn);
+                }
+            }
+            typeset(container);
+        }
+
+        function addLog(msg, color) {
+            color = color || 'text-green-400';
+            const div = document.createElement('div');
+            div.className = color;
+            div.innerText = '> ' + msg;
+            logBox.prepend(div);
+        }
+
+        function fire() {
+            particles.push({
+                x: -50, y: canvas.height / 2,
+                type: particleType, energy: currentEnergy,
+                active: true, speed: particleType === 'electron' ? 4 : 7,
+                color: particleType === 'electron' ? '#60a5fa' : '#fbbf24'
+            });
+        }
+
+        function handlePhotonImpact(p) {
+            let absorbed = false;
+            for (let n = nState + 1; n <= 10; n++) {
+                const deltaE = ENERGY_LEVELS[n] - ENERGY_LEVELS[nState];
+                if (Math.abs(p.energy - deltaE) < 0.01) {
+                    nState = n;
+                    addLog("Resonance Absorption! Jump to n=" + n, 'text-yellow-400');
+                    absorbed = true;
+                    break;
+                }
+            }
+            if (!absorbed && (p.energy + ENERGY_LEVELS[nState] >= 0)) {
+                triggerIonization();
+                absorbed = true;
+            }
+            if (!absorbed) {
+                p.active = true;
+                addLog("Energy mismatch, photon passed through.", 'text-slate-500');
+            } else {
+                p.active = false;
+            }
+        }
+
+        function handleElectronImpact(p) {
+            const currentE = ENERGY_LEVELS[nState];
+            const totalE = p.energy + currentE;
+
+            if (totalE >= 0) {
+                addLog("Atom Ionized!", 'text-red-400');
+                triggerIonization();
+                p.energy = totalE;
+                p.active = true;
+            } else {
+                let targetN = nState;
+                for (let n = nState + 1; n <= 10; n++) {
+                    const cost = ENERGY_LEVELS[n] - currentE;
+                    if (p.energy >= cost) targetN = n;
+                }
+                if (targetN > nState) {
+                    const loss = ENERGY_LEVELS[targetN] - currentE;
+                    nState = targetN;
+                    p.energy -= loss;
+                    addLog("Inelastic! Remaining E: " + p.energy.toFixed(2) + 'eV', 'text-blue-300');
+                } else {
+                    addLog("Insufficient energy, elastic collision.", 'text-slate-500');
+                }
+                p.active = true;
+            }
+        }
+
+        function triggerIonization() {
+            nState = 11;
+            document.getElementById('ionization-alert').classList.remove('hidden');
+            if (ionizationTimer) clearTimeout(ionizationTimer);
+            ionizationTimer = setTimeout(function () {
+                document.getElementById('ionization-alert').classList.add('hidden');
+                nState = 1;
+                ionizationTimer = null;
+            }, 2000);
+        }
+
+        function emitPhoton(fromN, toN) {
+            const deltaE = ENERGY_LEVELS[fromN] - ENERGY_LEVELS[toN];
+            const cx = canvas.width / 2 - 80;
+            const cy = canvas.height / 2;
+            emittedPhotons.push({
+                x: cx, y: cy,
+                energy: deltaE,
+                vx: (Math.random() - 0.5) * 5,
+                vy: (Math.random() - 0.5) * 5,
+                life: 1.0,
+                color: getPhotonColor(deltaE)
+            });
+        }
+
+        function getPhotonColor(energy) {
+            if (energy > 3.0) return '#a78bfa';
+            if (energy > 2.5) return '#60a5fa';
+            if (energy > 2.0) return '#4ade80';
+            if (energy > 1.8) return '#facc15';
+            return '#f87171';
+        }
+
+        function getRadius(n) { return (n * n) * R1 + 10; }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const cx = canvas.width / 2 - 80;
+            const cy = canvas.height / 2;
+
+            ctx.beginPath();
+            ctx.arc(cx, cy, 6, 0, Math.PI * 2);
+            ctx.fillStyle = '#f87171'; ctx.fill();
+
+            for (let i = 1; i <= 6; i++) {
+                const r = getRadius(i);
+                ctx.beginPath();
+                ctx.arc(cx, cy, r, 0, Math.PI * 2);
+                ctx.setLineDash([2, 4]);
+                ctx.strokeStyle = (nState === i) ? '#fde047' : 'rgba(100, 116, 139, 0.2)';
+                ctx.stroke();
+            }
+
+            if (nState <= 6) {
+                const r = getRadius(nState);
+                const angle = Date.now() * (0.002 / Math.sqrt(nState));
+                ctx.beginPath();
+                ctx.arc(cx + Math.cos(angle) * r, cy + Math.sin(angle) * r, 4, 0, Math.PI * 2);
+                ctx.fillStyle = '#38bdf8'; ctx.fill();
+            }
+
+            for (let i = particles.length - 1; i >= 0; i--) {
+                let p = particles[i];
+                let oldX = p.x;
+                p.x += p.speed;
+
+                if (p.active && oldX < (cx - 5) && p.x >= (cx - 5)) {
+                    if (p.type === 'photon') handlePhotonImpact(p);
+                    else handleElectronImpact(p);
+                }
+
+                ctx.beginPath();
+                if (p.type === 'photon') {
+                    ctx.strokeStyle = p.color; ctx.lineWidth = 2;
+                    ctx.moveTo(p.x - 20, p.y);
+                    for (let j = 0; j < 20; j++) ctx.lineTo(p.x - 20 + j, p.y + Math.sin(j * 0.5 + Date.now() * 0.02) * 4);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = p.color;
+                    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2); ctx.fill();
+                }
+
+                if (p.x > canvas.width) {
+                    particles.splice(i, 1);
+                }
+            }
+
+            emittedPhotons.forEach(function (p, idx) {
+                p.x += p.vx; p.y += p.vy; p.life -= 0.01;
+                ctx.globalAlpha = p.life;
+                ctx.beginPath();
+                ctx.strokeStyle = p.color;
+                ctx.moveTo(p.x - 10, p.y);
+                for (let i = 0; i < 15; i++) ctx.lineTo(p.x - 10 + i, p.y + Math.sin(i * 0.8 + Date.now() * 0.05) * 3);
+                ctx.stroke();
+                ctx.globalAlpha = 1.0;
+                if (p.life <= 0) emittedPhotons.splice(idx, 1);
+            });
+
+            const gx = canvas.width - 100;
+            const bY = canvas.height - 50;
+            const chartH = canvas.height - 100;
+            ctx.beginPath(); ctx.moveTo(gx, bY); ctx.lineTo(gx, bY - chartH - 20);
+            ctx.strokeStyle = '#475569'; ctx.lineWidth = 1; ctx.stroke();
+
+            ENERGY_LEVELS.slice(1, 8).forEach(function (ev, i) {
+                const n = i + 1;
+                const y = bY - ((ev - (-13.6)) / 13.6 * chartH);
+                ctx.beginPath(); ctx.moveTo(gx - 30, y); ctx.lineTo(gx + 30, y);
+                ctx.strokeStyle = (nState === n) ? '#fbbf24' : '#475569';
+                ctx.lineWidth = (nState === n) ? 3 : 1; ctx.stroke();
+
+                ctx.fillStyle = (nState === n) ? '#fbbf24' : '#94a3b8';
+                ctx.font = '11px monospace';
+                ctx.textAlign = 'left'; ctx.fillText('n=' + n, gx + 35, y + 4);
+                ctx.textAlign = 'right'; ctx.fillText(ev.toFixed(2) + ' eV', gx - 35, y + 4);
+            });
+
+            animationFrame = requestAnimationFrame(draw);
+        }
+
+        setInterval(function () {
+            if (nState > 1 && nState <= 10) {
+                if (Math.random() > 0.7) {
+                    const targetN = Math.floor(Math.random() * (nState - 1)) + 1;
+                    addLog("Emission: n=" + nState + " to n=" + targetN + ", photon released.", 'text-purple-400');
+                    emitPhoton(nState, targetN);
+                    nState = targetN;
+                }
+            }
+        }, 4000);
+
+        function openModal(id) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.classList.remove('hidden');
+            if (id === 'modal-principle') switchTab(currentTab);
+            if (id === 'modal-steps') renderSteps();
+            if (id === 'modal-quiz') renderQuiz();
+        }
+
+        function closeModal(id) {
+            const el = document.getElementById(id);
+            if (el) el.classList.add('hidden');
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab-btn').forEach(function (b) { b.classList.remove('active'); });
+            const tabBtn = document.getElementById('tab-' + tab);
+            if (tabBtn) tabBtn.classList.add('active');
+
+            document.querySelectorAll('.tab-content').forEach(function (c) { c.classList.add('hidden'); });
+            const el = document.getElementById('content-' + tab);
+            if (el) {
+                el.classList.remove('hidden');
+                typeset(el);
+            }
+        }
+
+        function setParticle(t) {
+            particleType = t;
+            document.getElementById('btn-electron').className = t === 'electron'
+                ? 'flex-1 py-2 rounded-lg bg-blue-600 font-bold'
+                : 'flex-1 py-2 rounded-lg bg-slate-700 font-bold border border-slate-500';
+            document.getElementById('btn-photon').className = t === 'photon'
+                ? 'flex-1 py-2 rounded-lg bg-blue-600 font-bold'
+                : 'flex-1 py-2 rounded-lg bg-slate-700 font-bold border border-slate-500';
+            document.getElementById('ev-input-group').classList.toggle('hidden', t === 'photon');
+            document.getElementById('photon-input-group').classList.toggle('hidden', t === 'electron');
+        }
+
+        document.getElementById('energy-slider').addEventListener('input', function (e) {
+            currentEnergy = parseFloat(e.target.value);
+            document.getElementById('ev-display').innerText = currentEnergy.toFixed(2);
+        });
+
+        function renderSteps() {
+            const body = document.getElementById('steps-body');
+            body.innerHTML = STEPS.map(function (s, i) {
+                return '<div class="bg-slate-900/60 border border-slate-700 rounded-xl p-4">' +
+                    '<div class="text-indigo-300 font-bold mb-2">Step ' + (i + 1) + '</div>' +
+                    '<div class="leading-relaxed">' + s + '</div></div>';
+            }).join('');
+            typeset(body);
+        }
+
+        function renderQuiz() {
+            const body = document.getElementById('quiz-body');
+            if (!body) return;
+            const ref = 'Reference answer';
+            const shortNote = 'Predict first, then verify on the sim.';
+            body.innerHTML = QUIZ.map(function (q, idx) {
+                const n = idx + 1;
+                const name = 'q' + n;
+                let opts = '';
+                if (q.type === 'mc') {
+                    opts = '<div class="grid gap-1.5 mt-1">' + q.options.map(function (opt, oi) {
+                        const L = String.fromCharCode(65 + oi);
+                        return '<label class="flex items-start gap-2 rounded-lg border border-slate-600 p-2 cursor-pointer"><input type="radio" name="' + name + '" class="mt-0.5"><span>' + L + '. ' + opt + '</span></label>';
+                    }).join('') + '</div>';
+                } else {
+                    opts = '<p class="text-xs text-slate-500 mb-2">' + shortNote + '</p>';
+                }
+                const ans = quizAnswersVisible ? '<div class="mt-2 text-xs text-emerald-300 bg-emerald-950/40 border border-emerald-800/40 rounded-lg p-2"><strong>' + ref + ':</strong> ' + q.answer + '</div>' : '';
+                return '<div class="quiz-item mb-4"><div class="q-stem font-semibold mb-2">Q' + n + '. ' + q.stem + '</div>' + opts + ans + '</div>';
+            }).join('');
+            const ansBtn = document.getElementById('btn-quiz-answers');
+            if (ansBtn) ansBtn.textContent = quizAnswersVisible ? 'Hide answer' : 'Show answer';
+            typeset(body);
+        }
+
+        function doReset() {
+            nState = 1;
+            particles = [];
+            emittedPhotons = [];
+            if (ionizationTimer) {
+                clearTimeout(ionizationTimer);
+                ionizationTimer = null;
+            }
+            document.getElementById('ionization-alert').classList.add('hidden');
+            setParticle('electron');
+            currentEnergy = 10.20;
+            const slider = document.getElementById('energy-slider');
+            slider.value = '10.20';
+            document.getElementById('ev-display').innerText = '10.20';
+            initPhotonButtons();
+            logBox.innerHTML = '';
+            addLog("Waiting to start...", 'text-green-400');
+        }
+
+        function wireModals() {
+            document.getElementById('btn-steps').addEventListener('click', function () { openModal('modal-steps'); });
+            document.getElementById('btn-principle').addEventListener('click', function () { openModal('modal-principle'); });
+            document.getElementById('btn-quiz').addEventListener('click', function () { openModal('modal-quiz'); });
+            document.getElementById('btn-quiz-answers').addEventListener('click', function () {
+                quizAnswersVisible = !quizAnswersVisible;
+                renderQuiz();
+            });
+            document.getElementById('btn-reset').addEventListener('click', doReset);
+
+            document.querySelectorAll('[data-close-modal]').forEach(function (btn) {
+                btn.addEventListener('click', function () {
+                    closeModal(btn.getAttribute('data-close-modal'));
+                });
+            });
+
+            ['modal-steps', 'modal-principle', 'modal-quiz'].forEach(function (id) {
+                const modal = document.getElementById(id);
+                modal.addEventListener('click', function (e) {
+                    if (e.target === modal) closeModal(id);
+                });
+            });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape') {
+                    ['modal-steps', 'modal-principle', 'modal-quiz'].forEach(closeModal);
+                }
+            });
+        }
+
+        function resize() {
+            canvas.width = canvas.offsetWidth;
+            canvas.height = canvas.offsetHeight;
+        }
+
+        window.onload = function () {
+            document.documentElement.lang = 'en';
+            wireModals();
+            resize();
+            initPhotonButtons();
+            draw();
+        };
+        window.onresize = resize;
+    </script>
+<script type="module" src="https://static.cloudflareinsights.com/beacon.min.js/vce701823e78c4301a35b7e07294d87301792088814092" crossorigin="anonymous"></script>
+</body>
+</html>
